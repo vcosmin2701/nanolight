@@ -78,8 +78,8 @@ pub const Row = struct {
 pub const max_apps = 6;
 /// Google's completions fill what room is left, up to four.
 pub const max_web = 4;
-/// Every app and the three web rows leave room for three completions.
-pub const max_rows = max_apps + 3 + 3;
+/// Shared row budget for apps, files, settings, and web actions.
+pub const max_rows = 12;
 /// The web rows that always follow the apps: Google, Grok, X.
 const handoffs = 3;
 
@@ -142,7 +142,7 @@ pub const Results = struct {
     }
 
     fn push(r: *Results, row: Row) void {
-        if (r.n == max_rows) return;
+        std.debug.assert(r.n < max_rows);
         r.rows[r.n] = row;
         r.n += 1;
     }
@@ -175,8 +175,7 @@ pub fn url(buf: []u8, kind: Kind, query: []const u8) []const u8 {
     return w.buffered();
 }
 
-/// `query`, trimmed, as a URL's query value: spaces as `+`, the rest of
-/// what isn't plain as `%XX`. Stops where `w` is full.
+/// URL-encode a trimmed query. Returns an error if the writer is full.
 pub fn escape(w: *std.Io.Writer, query: []const u8) std.Io.Writer.Error!void {
     for (std.mem.trim(u8, query, " ")) |ch| {
         if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_' or ch == '.' or ch == '~') {

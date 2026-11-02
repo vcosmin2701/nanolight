@@ -63,8 +63,7 @@ pub const List = struct {
     }
 };
 
-/// User text is a predicate argument, never executable predicate syntax.
-/// Escape glob characters too, so filenames containing '*' stay literal.
+/// Escape user-supplied glob characters and match anywhere in the filename.
 fn pattern(buf: []u8, query: []const u8) std.Io.Writer.Error![]const u8 {
     var w: std.Io.Writer = .fixed(buf);
     try w.writeByte('*');
@@ -76,6 +75,7 @@ fn pattern(buf: []u8, query: []const u8) std.Io.Writer.Error![]const u8 {
     return w.buffered();
 }
 
+/// Pass query text as an argument so it cannot become predicate syntax.
 fn namePredicate(query: []const u8) ?objc.Object {
     var buf: [max_query * 2 + 2]u8 = undefined;
     const glob = pattern(&buf, query) catch return null;

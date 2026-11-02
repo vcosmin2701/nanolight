@@ -22,8 +22,6 @@ pub const roots = [_][]const u8{
 /// Shown with an empty query before anything was opened.
 const starters = [_][]const u8{ "Safari", "Notes", "Calendar", "System Settings", "Finder" };
 
-pub const Icon = struct { png: []u8 };
-
 pub const Index = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -32,7 +30,7 @@ pub const Index = struct {
     names: std.ArrayList([]const u8) = .empty,
     /// Times each was opened.
     launches: std.ArrayList(u16) = .empty,
-    icons: std.AutoHashMapUnmanaged(u32, ?Icon) = .empty,
+    icons: std.AutoHashMapUnmanaged(u32, ?[]u8) = .empty,
 
     pub fn init(gpa: std.mem.Allocator) Index {
         return .{ .gpa = gpa, .arena = .init(gpa) };
@@ -40,7 +38,7 @@ pub const Index = struct {
 
     pub fn deinit(ix: *Index) void {
         var it = ix.icons.valueIterator();
-        while (it.next()) |v| if (v.*) |i| ix.gpa.free(i.png);
+        while (it.next()) |v| if (v.*) |png| ix.gpa.free(png);
         ix.icons.deinit(ix.gpa);
         ix.apps.deinit(ix.gpa);
         ix.names.deinit(ix.gpa);
@@ -170,10 +168,9 @@ pub const Index = struct {
     pub fn icon(ix: *Index, i: u32) ?[]const u8 {
         const entry = ix.icons.getOrPut(ix.gpa, i) catch return null;
         if (!entry.found_existing) {
-            const png = if (mac) iconPng(ix.gpa, ix.apps.items[i].path) else null;
-            entry.value_ptr.* = if (png) |p| .{ .png = p } else null;
+            entry.value_ptr.* = if (mac) iconPng(ix.gpa, ix.apps.items[i].path) else null;
         }
-        return if (entry.value_ptr.*) |cached| cached.png else null;
+        return entry.value_ptr.*;
     }
 };
 

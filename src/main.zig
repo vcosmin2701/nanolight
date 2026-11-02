@@ -85,33 +85,32 @@ pub const Live = struct {
 
     fn askFiles(ctx: *anyopaque, typed: []const u8) void {
         const l: *Live = @ptrCast(@alignCast(ctx));
-        // Stop immediately, including when a query is cleared or becomes
-        // too short. Old gathering work can never answer the new query.
+        // Cancel old work even when the new query is empty or too short.
         l.file_query.stop();
         l.file_len = 0;
         if (!files.eligible(typed)) return;
         @memcpy(l.file_typed[0..typed.len], typed);
         l.file_len = typed.len;
         l.file_waiting += 1;
-        nanoui.App.after(files.pause_ms, l, struct {
-            fn f(c: ?*anyopaque) callconv(.c) void {
-                const live: *Live = @ptrCast(@alignCast(c.?));
-                live.file_waiting -= 1;
-                if (live.file_waiting != 0 or live.file_len == 0) return;
-                const q = live.file_typed[0..live.file_len];
-                if (!std.mem.eql(u8, q, live.s.query.text())) return;
-                if (!live.file_query.start(q, live.home)) {
-                    const empty: files.List = .{};
-                    live.s.filesAnswered(q, &empty, .failed);
-                    if (live.window) |w| w.redraw();
-                    return;
-                }
-                if (!live.file_polling) {
-                    live.file_polling = true;
-                    nanoui.App.after(files.poll_ms, live, pollFiles);
-                }
-            }
-        }.f);
+        nanoui.App.after(files.pause_ms, l, startFiles);
+    }
+
+    fn startFiles(ctx: ?*anyopaque) callconv(.c) void {
+        const l: *Live = @ptrCast(@alignCast(ctx.?));
+        l.file_waiting -= 1;
+        if (l.file_waiting != 0 or l.file_len == 0) return;
+        const q = l.file_typed[0..l.file_len];
+        if (!std.mem.eql(u8, q, l.s.query.text())) return;
+        if (!l.file_query.start(q, l.home)) {
+            const empty: files.List = .{};
+            l.s.filesAnswered(q, &empty, .failed);
+            if (l.window) |w| w.redraw();
+            return;
+        }
+        if (!l.file_polling) {
+            l.file_polling = true;
+            nanoui.App.after(files.poll_ms, l, pollFiles);
+        }
     }
 
     fn pollFiles(ctx: ?*anyopaque) callconv(.c) void {
