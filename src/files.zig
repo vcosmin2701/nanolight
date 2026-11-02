@@ -29,6 +29,7 @@ pub fn eligible(typed: []const u8) bool {
     return dedicated(typed) or @import("calc.zig").eval(q) == null;
 }
 
+/// Owns the path bytes. Accessor slices borrow this entry's storage.
 pub const Entry = struct {
     bytes: [max_path_bytes]u8 = undefined,
     len: usize = 0,
@@ -76,15 +77,16 @@ fn pattern(buf: []u8, query: []const u8) std.Io.Writer.Error![]const u8 {
 }
 
 /// Pass query text as an argument so it cannot become predicate syntax.
-fn namePredicate(query: []const u8) ?objc.Object {
+fn namePredicate(query: []const u8) std.Io.Writer.Error!objc.Object {
     var buf: [max_query * 2 + 2]u8 = undefined;
-    const glob = pattern(&buf, query) catch return null;
+    const glob = try pattern(&buf, query);
     const args = objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{objc.nsString(glob)});
     return objc.msg(objc.Object, objc.class("NSPredicate"), "predicateWithFormat:argumentArray:", .{
         objc.nsString("kMDItemFSName LIKE[cd] %@ AND NOT (kMDItemContentTypeTree == 'com.apple.application-bundle')"), args,
     });
 }
 
+/// Owns the native query until `stop` or a completed `poll` releases it.
 pub const Query = struct {
     ns: ?objc.Object = null,
     polls: usize = 0,
@@ -97,30 +99,28 @@ pub const Query = struct {
         q.ns = null;
     }
 
-    pub fn start(q: *Query, typed: []const u8, home: []const u8) bool {
+    pub fn start(q: *Query, typed: []const u8, home: []const u8) !void {
         q.stop();
-        if (!eligible(typed) or home.len == 0) return false;
+        if (!eligible(typed)) return error.InvalidQuery;
+        if (home.len == 0) return error.MissingHome;
         const pool = objc.Pool.push();
         defer pool.pop();
-        const predicate = namePredicate(words(typed)) orelse return false;
+        const predicate = try namePredicate(words(typed));
         const scopes = objc.msg(objc.Object, objc.class("NSMutableArray"), "array", .{});
         for ([_][]const u8{ "Desktop", "Documents", "Downloads" }) |folder| {
             var path: [max_path_bytes]u8 = undefined;
-            const p = std.fmt.bufPrint(&path, "{s}/{s}", .{ home, folder }) catch continue;
+            const p = std.fmt.bufPrint(&path, "{s}/{s}", .{ home, folder }) catch return error.PathTooLong;
             objc.msg(void, scopes, "addObject:", .{objc.nsString(p)});
         }
-        const ns = objc.msg(objc.Object, objc.alloc("NSMetadataQuery"), "init", .{});
+        const ns = objc.msg(?objc.Object, objc.alloc("NSMetadataQuery"), "init", .{}) orelse return error.Unavailable;
+        errdefer objc.release(ns);
         objc.msg(void, ns, "setPredicate:", .{predicate});
         objc.msg(void, ns, "setSearchScopes:", .{scopes});
         const sort = objc.msg(objc.Object, objc.class("NSSortDescriptor"), "sortDescriptorWithKey:ascending:", .{ objc.nsString("kMDItemFSContentChangeDate"), objc.NO });
         objc.msg(void, ns, "setSortDescriptors:", .{objc.msg(objc.Object, objc.class("NSArray"), "arrayWithObject:", .{sort})});
-        if (objc.msg(objc.BOOL, ns, "startQuery", .{}) == objc.NO) {
-            objc.release(ns);
-            return false;
-        }
+        if (objc.msg(objc.BOOL, ns, "startQuery", .{}) == objc.NO) return error.StartFailed;
         q.ns = ns;
         q.polls = 0;
-        return true;
     }
 
     /// Null until gathering finishes. A bounded wait also handles an
@@ -191,11 +191,11 @@ test "native filename predicates treat user syntax as literal text" {
     const obj = objc.msg(objc.Object, objc.class("NSMutableDictionary"), "dictionary", .{});
     objc.msg(void, obj, "setObject:forKey:", .{ objc.nsString("Café 'report*.pdf"), objc.nsString("kMDItemFSName") });
     objc.msg(void, obj, "setObject:forKey:", .{ objc.nsString("public.pdf"), objc.nsString("kMDItemContentTypeTree") });
-    const predicate = namePredicate("cafe 'report*").?;
+    const predicate = try namePredicate("cafe 'report*");
     try std.testing.expect(objc.msg(objc.BOOL, predicate, "evaluateWithObject:", .{obj}) != objc.NO);
     objc.msg(void, obj, "setObject:forKey:", .{ objc.nsString("Café 'reportX.pdf"), objc.nsString("kMDItemFSName") });
     try std.testing.expect(objc.msg(objc.BOOL, predicate, "evaluateWithObject:", .{obj}) == objc.NO);
-    try std.testing.expect(objc.msg(objc.BOOL, namePredicate("' OR TRUEPREDICATE OR '").?, "evaluateWithObject:", .{obj}) == objc.NO);
+    try std.testing.expect(objc.msg(objc.BOOL, try namePredicate("' OR TRUEPREDICATE OR '"), "evaluateWithObject:", .{obj}) == objc.NO);
 }
 
 test "native metadata query gathers asynchronously and can be cancelled" {
@@ -206,7 +206,7 @@ test "native metadata query gathers asynchronously and can be cancelled" {
     const process = objc.msg(objc.Object, objc.class("NSProcessInfo"), "processInfo", .{});
     const env = objc.msg(objc.Object, process, "environment", .{});
     const home = objc.fromNSString(objc.msg(?objc.Object, env, "objectForKey:", .{objc.nsString("HOME")}));
-    try std.testing.expect(q.start("file:nanolight-unlikely-test-name-94f2", home));
+    try q.start("file:nanolight-unlikely-test-name-94f2", home);
     const loop = objc.msg(objc.Object, objc.class("NSRunLoop"), "currentRunLoop", .{});
     var list: List = .{};
     var state: ?State = null;
@@ -218,8 +218,21 @@ test "native metadata query gathers asynchronously and can be cancelled" {
     }
     try std.testing.expectEqual(State.ready, state.?);
     try std.testing.expect(q.ns == null);
-    try std.testing.expect(q.start("file:report", home));
+    try q.start("file:report", home);
+    try std.testing.expectError(error.InvalidQuery, q.start("file:", home));
+    try std.testing.expect(q.ns == null);
+    try q.start("file:report", home);
     q.stop();
     q.stop();
     try std.testing.expectEqual(State.idle, q.poll(&list).?);
+}
+
+test "query startup reports invalid input and scope overflow" {
+    var q: Query = .{};
+    defer q.stop();
+    try std.testing.expectError(error.InvalidQuery, q.start("file:", "/Users/me"));
+    try std.testing.expectError(error.MissingHome, q.start("file:report", ""));
+    const long_home: [max_path_bytes]u8 = @splat('a');
+    try std.testing.expectError(error.PathTooLong, q.start("file:report", &long_home));
+    try std.testing.expect(q.ns == null);
 }

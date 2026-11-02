@@ -101,12 +101,13 @@ pub const Live = struct {
         if (l.file_waiting != 0 or l.file_len == 0) return;
         const q = l.file_typed[0..l.file_len];
         if (!std.mem.eql(u8, q, l.s.query.text())) return;
-        if (!l.file_query.start(q, l.home)) {
+        l.file_query.start(q, l.home) catch |err| {
+            std.log.warn("nanolight: file search unavailable ({s})", .{@errorName(err)});
             const empty: files.List = .{};
             l.s.filesAnswered(q, &empty, .failed);
             if (l.window) |w| w.redraw();
             return;
-        }
+        };
         if (!l.file_polling) {
             l.file_polling = true;
             nanoui.App.after(files.poll_ms, l, pollFiles);
