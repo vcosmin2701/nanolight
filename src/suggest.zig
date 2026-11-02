@@ -125,6 +125,7 @@ pub const Cache = struct {
     next: usize = 0,
 
     pub fn put(c: *Cache, typed: []const u8, l: *const List) void {
+        if (std.mem.trim(u8, typed, " \t\r\n").len > max_len) return;
         var buf: [max_len]u8 = undefined;
         const key = plain(&buf, typed);
         const i = c.find(key) orelse blk: {
@@ -148,6 +149,7 @@ pub const Cache = struct {
     /// letters, kept to what still begins with them (false).
     pub fn lookup(c: *const Cache, typed: []const u8, out: *List) bool {
         out.n = 0;
+        if (std.mem.trim(u8, typed, " \t\r\n").len > max_len) return false;
         var buf: [max_len]u8 = undefined;
         const key = plain(&buf, typed);
         if (key.len == 0) return false;
@@ -190,6 +192,17 @@ test "the address is escaped" {
 test "long queries cannot match a truncated suggestion cache key" {
     const long: [max_len + 1]u8 = @splat('a');
     try std.testing.expect(!same(long[0..max_len], &long));
+    var cache: Cache = .{};
+    var said: List = .{};
+    said.push("a completion");
+    var out: List = .{};
+    cache.put(&long, &said);
+    try std.testing.expect(!cache.lookup(long[0..max_len], &out));
+    cache.put(long[0..max_len], &said);
+    try std.testing.expect(!cache.lookup(&long, &out));
+    try std.testing.expectEqual(@as(usize, 0), out.n);
+    try std.testing.expect(cache.lookup(long[0..max_len], &out));
+    try std.testing.expectEqualStrings("a completion", out.get(0));
     var buf: [16]u8 = undefined;
     try std.testing.expectEqualStrings("", url(&buf, "hello"));
 }

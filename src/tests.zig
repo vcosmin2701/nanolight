@@ -26,6 +26,12 @@ const Probe = struct {
     opened: [256]u8 = undefined,
     opened_len: usize = 0,
     hidden: bool = false,
+    app_opens: usize = 0,
+
+    fn appOpened(ctx: *anyopaque) void {
+        const p: *Probe = @ptrCast(@alignCast(ctx));
+        p.app_opens += 1;
+    }
 
     fn open(ctx: *anyopaque, target: []const u8) void {
         const p: *Probe = @ptrCast(@alignCast(ctx));
@@ -54,7 +60,7 @@ test "the panel finds, moves, answers and hands off" {
     var probe: Probe = .{};
     var s: view.Nanolight = .{ .index = &ix };
     defer s.query.deinit();
-    s.host = .{ .ctx = &probe, .open = Probe.open, .hide = Probe.hide };
+    s.host = .{ .ctx = &probe, .open = Probe.open, .hide = Probe.hide, .app_opened = Probe.appOpened };
     s.reveal();
     var t: ui.Tester = undefined;
     try t.init(gpa, .init(&s, view.Nanolight.view), .{ .width = view.width, .height = 480, .dark = true });
@@ -88,6 +94,7 @@ test "the panel finds, moves, answers and hands off" {
     try std.testing.expectEqualStrings("/Applications/System Settings.app", probe.opened[0..probe.opened_len]);
     try std.testing.expect(probe.hidden);
     try std.testing.expectEqual(@as(u16, 1), ix.launches.items[ix.find("System Settings").?]);
+    try std.testing.expectEqual(@as(usize, 1), probe.app_opens);
 
     // ⌘2 opens the second row at once: Safari, under System Settings,
     // which was just opened.
@@ -573,6 +580,10 @@ const FileHost = struct {
         const h: *FileHost = @ptrCast(@alignCast(ctx));
         Probe.hide(&h.probe);
     }
+    fn appOpened(ctx: *anyopaque) void {
+        const h: *FileHost = @ptrCast(@alignCast(ctx));
+        Probe.appOpened(&h.probe);
+    }
 };
 
 test "file rows show paths, open files, reveal folders and display empty states" {
@@ -583,7 +594,7 @@ test "file rows show paths, open files, reveal folders and display empty states"
     var host: FileHost = .{};
     var s: view.Nanolight = .{ .index = &ix };
     defer s.query.deinit();
-    s.host = .{ .ctx = &host, .open = FileHost.open, .hide = FileHost.hide, .reveal_file = FileHost.reveal };
+    s.host = .{ .ctx = &host, .open = FileHost.open, .hide = FileHost.hide, .reveal_file = FileHost.reveal, .app_opened = FileHost.appOpened };
     s.query.set("file:report");
     s.query.focus();
     s.rebuild();
@@ -611,6 +622,7 @@ test "file rows show paths, open files, reveal folders and display empty states"
     try std.testing.expect(tester.shortcut(.{ .key = ui.Shortcut.enter, .cmd = true }));
     try std.testing.expect(host.revealed);
     try std.testing.expectEqualStrings("/Users/me/Downloads/Reports", host.probe.opened[0..host.probe.opened_len]);
+    try std.testing.expectEqual(@as(usize, 0), host.probe.app_opens);
     const empty: files.List = .{};
     s.filesAnswered("file:report", &empty, .ready);
     tester.settle(1);

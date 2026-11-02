@@ -24,6 +24,8 @@ pub const Host = struct {
     suggest: ?*const fn (ctx: *anyopaque, query: []const u8) void = null,
     files: ?*const fn (ctx: *anyopaque, query: []const u8) void = null,
     reveal_file: ?*const fn (ctx: *anyopaque, path: []const u8) void = null,
+    /// App launch counts changed and may need syncing.
+    app_opened: ?*const fn (ctx: *anyopaque) void = null,
     /// Shows a search's page in the panel, over `webArea`; null takes it
     /// away. Without it, searches open in the browser.
     preview: ?*const fn (ctx: *anyopaque, url: ?[]const u8) void = null,
@@ -604,6 +606,7 @@ pub const Nanolight = struct {
             },
             .app => {
                 s.index.opened(r.app, s.kv);
+                if (s.host) |h| if (h.app_opened) |opened| opened(h.ctx);
                 s.go(s.index.apps.items[r.app].path);
             },
             .file, .folder => s.go(s.local.entries[r.file].path()),

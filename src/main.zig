@@ -76,7 +76,12 @@ pub const Live = struct {
     fn host(l: *Live) view.Host {
         const bind = @import("settings_bind.zig");
         bind.box.ctx = l;
-        return .{ .ctx = l, .open = open, .hide = hide, .resize = resize, .suggest = ask, .files = askFiles, .reveal_file = revealFile, .preview = showPage, .settings = &bind.box };
+        return .{ .ctx = l, .open = open, .hide = hide, .resize = resize, .suggest = ask, .files = askFiles, .reveal_file = revealFile, .app_opened = appOpened, .preview = showPage, .settings = &bind.box };
+    }
+
+    fn appOpened(ctx: *anyopaque) void {
+        const l: *Live = @ptrCast(@alignCast(ctx));
+        if (l.acct) |*a| a.changed();
     }
 
     fn revealFile(_: *anyopaque, path: []const u8) void {
@@ -140,8 +145,6 @@ pub const Live = struct {
             }.f);
         } else {
             _ = nanoui.shell.openPath(target);
-            // Its count went up: the other Macs suggest it too.
-            if (l.acct) |*a| a.changed();
         }
     }
 
