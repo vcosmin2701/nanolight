@@ -1,15 +1,5 @@
-//! Signing in to Codegraff, and syncing settings (settings.zig) through it
-//! to every Mac on the same account. Optional: nothing leaves the Mac until
-//! someone signs in from the menu bar, and signing out stops it.
-//!
-//! Sign-in is the device flow graff uses (the gateway's /v1/device/*): the
-//! browser opens codegraff.com to approve it, where Codegraff's terms and
-//! privacy policy apply, and the key it gives is kept in the Keychain. Its
-//! label is `nanolight`, which credits a new account (frontend/src/lib/
-//! signup-source.ts in zigrepper). The record lives in the gateway's sync
-//! store (/v1/sync/nanolight, the account's own, which browse's sync uses
-//! too). It is pulled at launch, after signing in, and when the panel opens
-//! if the last pull is five minutes old; pushed two seconds after a change.
+//! Optional Codegraff device sign-in and settings sync.
+//! API keys are stored in Keychain. Pull every five minutes; debounce pushes.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const settings = @import("settings.zig");
@@ -53,6 +43,12 @@ pub const Account = struct {
     last_pull: i64 = 0,
     pulling: bool = false,
     pushes_waiting: u32 = 0,
+
+    /// Frees the in-memory key without changing Keychain.
+    pub fn deinit(a: *Account) void {
+        if (a.key) |key| a.gpa.free(key);
+        a.key = null;
+    }
 
     pub fn email(a: *const Account) []const u8 {
         return a.email_buf[0..a.email_len];
@@ -158,7 +154,7 @@ pub const Account = struct {
     /// Signs out: the key is revoked and forgotten; this Mac's settings stay.
     /// While waiting on the browser, stops waiting.
     pub fn signOut(a: *Account) void {
-        if (a.key) |k| {
+        if (a.key != null) {
             var u: [256]u8 = undefined;
             var auth: [256]u8 = undefined;
             nanoui.http.fetch(a.gpa, .{
@@ -167,7 +163,6 @@ pub const Account = struct {
                 .headers = &.{.{ .name = "Authorization", .value = a.bearer(&auth) }},
                 .timeout = 15,
             }, a, revoked);
-            a.gpa.free(k);
         }
         a.forget();
     }
@@ -175,7 +170,7 @@ pub const Account = struct {
     fn revoked(_: *Account, _: nanoui.http.Response) void {}
 
     fn forget(a: *Account) void {
-        a.key = null;
+        a.deinit();
         keychain.remove(service, key_account);
         a.kv.remove(email_key);
         a.kv.remove(synced_key);

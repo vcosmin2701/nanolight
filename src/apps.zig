@@ -1,8 +1,4 @@
-//! The apps Nanolight finds: every `.app` in the usual folders (and one
-//! folder down, for Utilities and suites), named without `.app`, sorted
-//! and without duplicates. How often each was opened is kept in the
-//! app's defaults and lifts it in the ranking. Icons are asked of the
-//! system only for the rows on screen, and kept.
+//! Installed application index, launch counts, and cached system icons.
 const std = @import("std");
 const builtin = @import("builtin");
 const nanoui = @import("nanoui");
@@ -26,8 +22,6 @@ pub const roots = [_][]const u8{
 /// Shown with an empty query before anything was opened.
 const starters = [_][]const u8{ "Safari", "Notes", "Calendar", "System Settings", "Finder" };
 
-pub const Icon = struct { png: []u8 };
-
 pub const Index = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -36,7 +30,7 @@ pub const Index = struct {
     names: std.ArrayList([]const u8) = .empty,
     /// Times each was opened.
     launches: std.ArrayList(u16) = .empty,
-    icons: std.AutoHashMapUnmanaged(u32, ?Icon) = .empty,
+    icons: std.AutoHashMapUnmanaged(u32, ?[]u8) = .empty,
 
     pub fn init(gpa: std.mem.Allocator) Index {
         return .{ .gpa = gpa, .arena = .init(gpa) };
@@ -44,7 +38,7 @@ pub const Index = struct {
 
     pub fn deinit(ix: *Index) void {
         var it = ix.icons.valueIterator();
-        while (it.next()) |v| if (v.*) |i| ix.gpa.free(i.png);
+        while (it.next()) |v| if (v.*) |png| ix.gpa.free(png);
         ix.icons.deinit(ix.gpa);
         ix.apps.deinit(ix.gpa);
         ix.names.deinit(ix.gpa);
@@ -55,13 +49,18 @@ pub const Index = struct {
     /// Adds an app unless one of its name is there already.
     pub fn add(ix: *Index, name: []const u8, path: []const u8) !void {
         for (ix.names.items) |n| if (std.ascii.eqlIgnoreCase(n, name)) return;
+        // Reserve all three arrays before changing their lengths.
+        try ix.apps.ensureUnusedCapacity(ix.gpa, 1);
+        try ix.names.ensureUnusedCapacity(ix.gpa, 1);
+        try ix.launches.ensureUnusedCapacity(ix.gpa, 1);
         const a = ix.arena.allocator();
         const p = try a.dupe(u8, path);
+        const owned_name = try a.dupe(u8, name);
         const parent = std.fs.path.dirname(p) orelse "";
         const folder = std.fs.path.basename(parent);
-        try ix.apps.append(ix.gpa, .{ .name = try a.dupe(u8, name), .path = p, .folder = folder });
-        try ix.names.append(ix.gpa, ix.apps.items[ix.apps.items.len - 1].name);
-        try ix.launches.append(ix.gpa, 0);
+        ix.apps.appendAssumeCapacity(.{ .name = owned_name, .path = p, .folder = folder });
+        ix.names.appendAssumeCapacity(owned_name);
+        ix.launches.appendAssumeCapacity(0);
     }
 
     /// Finds the apps on this machine; `home` adds ~/Applications.
@@ -115,7 +114,7 @@ pub const Index = struct {
     pub fn suggestions(ix: *const Index, out: []u32) usize {
         var n: usize = 0;
         // Most opened first: a few passes from the highest count down.
-        var best: u16 = std.math.maxInt(u16);
+        var best: u32 = @as(u32, std.math.maxInt(u16)) + 1;
         while (n < out.len) {
             var next: u16 = 0;
             for (ix.launches.items) |l| if (l < best and l > next) {
@@ -167,10 +166,11 @@ pub const Index = struct {
 
     /// The app's icon as PNG, made the first time it is asked for.
     pub fn icon(ix: *Index, i: u32) ?[]const u8 {
-        if (ix.icons.get(i)) |cached| return if (cached) |c| c.png else null;
-        const png = if (mac) iconPng(ix.gpa, ix.apps.items[i].path) else null;
-        ix.icons.put(ix.gpa, i, if (png) |p| .{ .png = p } else null) catch {};
-        return png;
+        const entry = ix.icons.getOrPut(ix.gpa, i) catch return null;
+        if (!entry.found_existing) {
+            entry.value_ptr.* = if (mac) iconPng(ix.gpa, ix.apps.items[i].path) else null;
+        }
+        return entry.value_ptr.*;
     }
 };
 
@@ -220,4 +220,31 @@ test "names are kept once, sorted, and opening one suggests it" {
     ix.launches.items[0] = 0;
     ix.load(mem.store());
     try t.expectEqual(@as(u16, 2), ix.launches.items[0]);
+}
+
+fn addWithAllocationFailures(gpa: std.mem.Allocator) !void {
+    var ix: Index = .init(gpa);
+    defer ix.deinit();
+    defer std.debug.assert(ix.apps.items.len == ix.names.items.len and ix.apps.items.len == ix.launches.items.len);
+    for (0..24) |i| {
+        var buf: [64]u8 = undefined;
+        const name = try std.fmt.bufPrint(&buf, "App {d}", .{i});
+        try ix.add(name, "/Applications/Test.app");
+    }
+}
+
+test "allocation failure leaves the app index consistent" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, addWithAllocationFailures, .{});
+}
+
+test "saturated launch counts remain first in suggestions" {
+    var ix: Index = .init(std.testing.allocator);
+    defer ix.deinit();
+    try ix.add("Rare", "/Applications/Rare.app");
+    try ix.add("Frequent", "/Applications/Frequent.app");
+    ix.launches.items[0] = 1;
+    ix.launches.items[1] = std.math.maxInt(u16);
+    var out: [2]u32 = undefined;
+    try std.testing.expectEqual(@as(usize, 2), ix.suggestions(&out));
+    try std.testing.expectEqual(@as(u32, 1), out[0]);
 }

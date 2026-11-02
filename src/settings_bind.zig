@@ -1,5 +1,4 @@
-//! Live's answers to Settings. The box is one, its context set to the
-//! Live that is showing the panel (one Nanolight runs).
+//! Binds Settings callbacks to the running app.
 const nanoui = @import("nanoui");
 const shortcut = @import("shortcut.zig");
 const account = @import("account.zig");

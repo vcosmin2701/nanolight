@@ -1,13 +1,13 @@
-//! The math row: the expression, an arrow, the answer, each over a small
-//! label; the answer's says Copied once it is.
+//! Calculator result row and copy feedback.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
+const Palette = @import("view.zig").Palette;
 
 const width: f32 = 680;
 const list_pad: f32 = 6;
 
-pub fn draw(c: *ui.Context, p: anytype, query: []const u8, answer: []const u8, hex: []const u8, copied: bool) void {
+pub fn draw(c: *ui.Context, p: Palette, query: []const u8, answer: []const u8, hex: []const u8, copied: bool) void {
     const half = (width - list_pad * 2 - 20 - 32 - 24) / 2;
     {
         const l = ui.div(c).column().w(half).itemsCenter().gap(6);
@@ -29,7 +29,7 @@ pub fn draw(c: *ui.Context, p: anytype, query: []const u8, answer: []const u8, h
     } else chip(c, p, if (hex.len > 0) c.print("Result · {s}", .{hex}) else "Result", null);
 }
 
-fn chip(c: *ui.Context, p: anytype, str: []const u8, tone: ?ui.Color) void {
+fn chip(c: *ui.Context, p: Palette, str: []const u8, tone: ?ui.Color) void {
     const d = ui.div(c).row().gap(4).px(8).h(20).itemsCenter().rounded(6).bg(if (tone) |t| t.alpha(0.16) else p.tile);
     defer d.end();
     if (tone) |t| ui.icon(c, "checkmark", .{ .size = 10, .weight = .bold, .color = t });

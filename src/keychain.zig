@@ -1,7 +1,4 @@
-//! A secret kept in the login Keychain: the Codegraff key Nanolight signs
-//! in with (account.zig). A generic password, by service and account; the
-//! queries are NSDictionaries, which the Security framework takes as the
-//! CFDictionaries they are.
+//! Generic Keychain password storage, identified by service and account.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;

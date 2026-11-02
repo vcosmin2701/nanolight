@@ -1,11 +1,5 @@
-//! The promo's camera, applied to frames nanoui rendered at three times the
-//! stage's points (3840×2160 for a 1280×720 stage): a zoom and a pan eased
-//! on an S-curve, a loupe that magnifies one detail without moving the
-//! frame (as Screen Studio's does), a vignette and a little grain. Every
-//! value is a function of the time: no state, nothing random between runs.
-//!
-//! Eases are Emil Kowalski's: `out` (0.23, 1, 0.32, 1) for what enters,
-//! `in_out` (0.77, 0, 0.175, 1) for the camera.
+//! Deterministic promo camera, magnifier, vignette, and grain.
+//! Input: stage points. Output: BGRA pixels.
 const std = @import("std");
 
 pub const Bezier = struct {

@@ -2,7 +2,7 @@
 
 <h1 align="center">Nanolight</h1>
 <p align="center"><b>A ⌘Space launcher for the Mac, drawn by <a href="https://github.com/justrach/nanoui">nanoui</a>.</b><br>
-Apps, math, Google, Grok and X: one keystroke away. Native Zig, no Electron, about 1 MB.</p>
+App and file search, a calculator, and web search. Built with Zig and nanoui.</p>
 
 <p align="center"><a href="https://github.com/justrach/nanolight/raw/refs/heads/main/docs/promo.mp4"><img src="docs/promo-preview.gif" alt="Nanolight in 31 seconds: apps, initials, typos, math, Google suggestions and results in the panel, on a MacBook Air" width="760"></a><br><sub><a href="https://github.com/justrach/nanolight/raw/refs/heads/main/docs/promo.mp4"><b>Watch it with sound →</b></a> · <a href="docs/promo.md">How it was made</a></sub></p>
 
@@ -10,24 +10,27 @@ Apps, math, Google, Grok and X: one keystroke away. Native Zig, no Electron, abo
 
 ## What it does
 
-- **Finds apps as you type**: whole names, starts of words, initials (`ss` is System Settings), letters in order, and typos (`chorme` is Chrome). What you open often climbs.
-- **Completes inline**: the rest of the top app's name, or of Google's top suggestion, is drawn faintly after the caret. Tab or → takes it; Return never does.
-- **Does math**: `2^10 * 3` answers 3,072 (and `0xC00`). Return copies it.
-- **Google suggestions**: up to four, under the apps, the words you add in bold. Nothing that reads as an address (a dot, a slash, an @) is sent.
-- **Results in the panel**: Return on a search shows Google's page in the panel itself. Esc goes back to the list, ⌘↩ opens it in your browser, ⌘[ goes back a page.
-- **Ask Grok, search X**, a row away.
-- **⌘1–⌘9** run a row at once; ↑ ↓ and ⌃N ⌃P move.
-- Lives in the menu bar: no Dock icon, and nothing drawn while it's idle.
+- **App search** matches names, word prefixes, initials (`ss` for System Settings), subsequences, and typos (`chorme` for Chrome). Frequently opened apps rank higher.
+- **File search** finds filenames in Desktop, Documents, and Downloads using Spotlight. Type `file:invoice` for files only. Return opens a result; ⌘Return reveals it in Finder. Matching ignores case and accents. Up to four recent matches appear below apps.
+- **Inline completion** suggests an app name or Google completion. Tab or → accepts it; Return runs the selected result.
+- **Calculator** evaluates expressions such as `2^10 * 3` → 3,072 (`0xC00`). Return copies the answer.
+- **Google suggestions** appear below local results. Queries containing address or path characters are excluded.
+- **Embedded search** shows Google results in the panel. Esc returns to the list; ⌘Return opens the browser; ⌘[ goes back.
+- **Grok and X** searches are available as result actions.
+- **Keyboard navigation**: ↑/↓ or ⌃N/⌃P select a result; ⌘1–⌘9 run a numbered result.
+- **Menu bar app** with no Dock icon or continuous rendering while idle.
+
+File matching runs locally; `file:` mode has no web requests or actions. Keep Spotlight indexing enabled, even if its keyboard shortcut is disabled. Files excluded from the index do not appear.
 
 ## Sync across Macs (optional)
 
-Off until you turn it on: choose **Sign In with Codegraff to Sync Across Macs…** in the menu bar icon's menu. Your browser opens codegraff.com to approve the sign-in, and from then on every Mac signed in to the same account shares:
+Sync is optional. Choose **Sign In with Codegraff to Sync Across Macs…** from the menu bar and approve the sign-in in your browser. Macs on the same account share:
 
-- the key that opens Nanolight,
-- whether Google suggestions are on,
-- how often you open each app, so an empty panel suggests the same apps everywhere.
+- the global keyboard shortcut,
+- the Google suggestions preference,
+- app launch counts used to rank suggestions.
 
-Two Macs merge rather than overwrite: the key and the suggestions setting follow whichever Mac changed them last, and each app keeps its higher count. Nothing else is sent: no queries, no history, no files. The sign-in key is kept in your Keychain, and **Sign Out of Codegraff** revokes it.
+The most recent shortcut and suggestions preferences win. Each app keeps the higher launch count from either Mac. Queries, search history, and files are not synced. The API key is stored in Keychain; **Sign Out of Codegraff** revokes it.
 
 Syncing goes through your Codegraff account, so [Codegraff's terms](https://codegraff.com/terms) and [privacy policy](https://codegraff.com/privacy) apply to it. New accounts made by signing in from Nanolight get $2 of Codegraff credit.
 
@@ -35,7 +38,7 @@ Syncing goes through your Codegraff account, so [Codegraff's terms](https://code
 
 Download `nanolight-macos-arm64.dmg` from the [latest release](https://github.com/justrach/nanolight/releases/latest), open it and drag Nanolight to Applications. macOS 14 or later, Apple silicon.
 
-On first run a short welcome picks the key that opens it (⌘Space, ⌥Space, ⌃Space or ⌥⌘Space; any other, such as ⌥X, can be recorded later in Settings) and says who else holds it: Spotlight gives up ⌘Space in System Settings → Keyboard → Keyboard Shortcuts → Spotlight. Signed releases update themselves from this repository's releases; the menu bar icon offers the restart.
+First-run setup offers ⌘Space, ⌥Space, ⌃Space, or ⌥⌘Space and checks for conflicts. Settings can also record a custom shortcut. To free ⌘Space, disable Spotlight's shortcut in System Settings → Keyboard → Keyboard Shortcuts → Spotlight. Signed releases support automatic updates.
 
 ## Build
 
@@ -58,6 +61,7 @@ VERSION=0.1.0 sh macos/package.sh   # the release: signed app, disk image, updat
 | `src/view.zig` | The panel: query, rows, footer, keys |
 | `src/results.zig` | What a query lists, in order |
 | `src/search.zig` | Fuzzy matching and ranking, allocation-free |
+| `src/files.zig` | Asynchronous local filename search through Spotlight |
 | `src/calc.zig` | The calculator |
 | `src/suggest.zig` | Google's completions: the privacy guard, decoding, the cache (after [browse](https://github.com/justrach/browse)) |
 | `src/preview.zig` | The results page in the panel (WKWebView) |

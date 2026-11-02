@@ -226,6 +226,7 @@ pub const Ranked = struct {
 /// The best `out.len` of `names` for `query`, best first, with `boost`
 /// (how often each was opened) added to its score. Returns how many matched.
 pub fn rank(query: []const u8, names: []const []const u8, boost: []const u16, out: []Ranked) usize {
+    if (out.len == 0) return 0;
     var n: usize = 0;
     for (names, 0..) |name, i| {
         var m = score(query, name) orelse continue;
@@ -245,6 +246,11 @@ pub fn rank(query: []const u8, names: []const []const u8, boost: []const u16, ou
     }
     std.sort.pdq(Ranked, out[0..n], {}, Ranked.before);
     return n;
+}
+
+test "ranking with no output capacity returns no matches" {
+    var out: [0]Ranked = .{};
+    try std.testing.expectEqual(@as(usize, 0), rank("app", &.{"Application"}, &.{}, &out));
 }
 
 test "the tiers rank as they should" {

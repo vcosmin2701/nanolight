@@ -1,12 +1,5 @@
-//! The first run, inside the panel itself: no tour, no permissions (Carbon's
-//! hot keys need none). Three steps, each one thing to do:
-//!   1. the shortcut: ⌘Space by default, and who else holds it, by name,
-//!      with the one thing that frees it;
-//!   2. press it for real: the panel closes, and comes back on the second
-//!      press — nothing advances on a button;
-//!   3. a first search to run, where Nanolight lives (the menu bar), and
-//!      whether it opens at login.
-//! Esc skips at any step and it stays skipped; the menu bar icon replays it.
+//! First-run setup: choose a shortcut, test it, then run a search.
+//! Escape skips setup; the menu bar can reopen it.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -286,7 +279,7 @@ pub const Onboard = struct {
         ui.div(c).wFull().h(1).bg(p.hair).end();
         const bar = ui.div(c).row().wFull().h(38).px(16).gap(8).itemsCenter();
         defer bar.end();
-        const n: usize = @intFromEnum(o.step);
+        const n: usize = @backingInt(o.step);
         for (0..3) |i| ui.div(c).w(if (i == n) 16 else 6).h(6).roundedFull().bg(if (i == n) p.text.alpha(0.7) else p.sub.alpha(0.3)).end();
         ui.textf(c, .{ .size = 12, .color = p.sub.alpha(0.8), .tabular = true }, "  {d} of 3", .{n + 1});
         ui.spacer(c);

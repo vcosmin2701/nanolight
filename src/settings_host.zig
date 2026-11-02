@@ -1,7 +1,4 @@
-//! What the Settings screen (settings_view.zig) asks of the app: the
-//! shortcut, opening at login, the Codegraff account, updates. Optional,
-//! like the panel's other host callbacks: tests, the film and the promo
-//! draw Settings with defaults and call nothing.
+//! App callbacks used by the Settings view.
 const shortcut = @import("shortcut.zig");
 const account = @import("account.zig");
 
