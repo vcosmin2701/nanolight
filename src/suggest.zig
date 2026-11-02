@@ -1,13 +1,5 @@
-//! Google's completions for what is typed, got as browse
-//! (github.com/justrach/browse, GoogleSuggestions.swift) gets them: the
-//! endpoint Firefox uses, no cookies kept, a short answer or none. Google
-//! doesn't publish it as an API, so a failure only leaves the other rows.
-//!
-//! Nothing that reads as an address goes out (a dot, a slash, a colon, an
-//! @: a URL, a host, an email), and an answer counts only for the words it
-//! says it answers. Answers are kept (`Cache`), and while a new one is on
-//! its way the answer to fewer letters stands in for it, cut to what still
-//! begins with what is typed: the rows don't blink at every key.
+//! Google suggestions with a bounded cache and query validation.
+//! Addresses and paths are excluded from requests.
 const std = @import("std");
 const results = @import("results.zig");
 
@@ -37,7 +29,7 @@ pub fn eligible(typed: []const u8) bool {
 pub fn url(buf: []u8, typed: []const u8) []const u8 {
     var w: std.Io.Writer = .fixed(buf);
     w.writeAll("https://suggestqueries.google.com/complete/search?client=firefox&q=") catch return "";
-    results.escape(&w, typed);
+    results.escape(&w, typed) catch return "";
     return w.buffered();
 }
 
@@ -66,6 +58,7 @@ pub fn plain(buf: *[max_len]u8, s: []const u8) []const u8 {
 
 /// Whether `a` and `b` are the same words.
 pub fn same(a: []const u8, b: []const u8) bool {
+    if (std.mem.trim(u8, a, " \t\r\n").len > max_len or std.mem.trim(u8, b, " \t\r\n").len > max_len) return false;
     var ba: [max_len]u8 = undefined;
     var bb: [max_len]u8 = undefined;
     return std.mem.eql(u8, plain(&ba, a), plain(&bb, b));
@@ -192,6 +185,13 @@ test "addresses, emails and paths never go out" {
 test "the address is escaped" {
     var buf: [256]u8 = undefined;
     try std.testing.expectEqualStrings("https://suggestqueries.google.com/complete/search?client=firefox&q=liquid+gl+%26+co", url(&buf, " liquid gl & co "));
+}
+
+test "long queries cannot match a truncated suggestion cache key" {
+    const long: [max_len + 1]u8 = @splat('a');
+    try std.testing.expect(!same(long[0..max_len], &long));
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("", url(&buf, "hello"));
 }
 
 test "an answer counts only for the words it answers" {

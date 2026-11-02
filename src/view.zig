@@ -1,7 +1,4 @@
-//! The launcher panel: the query, then what it finds in sections, then a
-//! footer naming what Return does. Neutral glass, a hairline rim, 40-point
-//! rows, the selection a grey step that slides between them. Nothing moves
-//! while nothing happens: frames come from keys, and from height settling.
+//! Launcher panel, result rows, keyboard actions, and transitions.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
@@ -9,6 +6,7 @@ const motion = ui.motion;
 const Index = @import("apps.zig").Index;
 const results = @import("results.zig");
 const suggest = @import("suggest.zig");
+const files = @import("files.zig");
 const settings_view = @import("settings_view.zig");
 const SettingsHost = @import("settings_host.zig").SettingsHost;
 const Row = results.Row;
@@ -24,6 +22,8 @@ pub const Host = struct {
     /// Google's completions of a query aren't known: ask for them, and
     /// answer with `Nanolight.answered`. Without it, none are listed.
     suggest: ?*const fn (ctx: *anyopaque, query: []const u8) void = null,
+    files: ?*const fn (ctx: *anyopaque, query: []const u8) void = null,
+    reveal_file: ?*const fn (ctx: *anyopaque, path: []const u8) void = null,
     /// Shows a search's page in the panel, over `webArea`; null takes it
     /// away. Without it, searches open in the browser.
     preview: ?*const fn (ctx: *anyopaque, url: ?[]const u8) void = null,
@@ -49,10 +49,9 @@ pub const footer_h = 38;
 const list_pad = 6;
 /// The room a window leaves round the panel for its shadow (`Nanolight.margin`).
 pub const shadow_margin: f32 = 40;
-/// The tallest the panel gets: every app row, the three web rows and
-/// Google's completions, under three section heads (math lists fewer), or
-/// a search's page. The window is this tall.
-pub const max_height: f32 = header_h + footer_h + 2 + list_pad * 2 + results.max_rows * row_h + 3 * section_h;
+/// The tallest the panel gets: the fixed row budget, under up to five
+/// section heads (apps, settings, files, Google, handoffs), or a web page.
+pub const max_height: f32 = header_h + footer_h + 2 + list_pad * 2 + results.max_rows * row_h + 5 * section_h;
 
 /// Where a search's page goes in a panel `h` tall: from `y` down from its
 /// top, `h` tall, between the header and the footer, the panel's width.
@@ -115,6 +114,8 @@ pub const Nanolight = struct {
     suggest_on: bool = true,
     web: suggest.List = .{},
     cache: suggest.Cache = .{},
+    local: files.List = .{},
+    file_state: files.State = .idle,
     /// A search's page is in the panel, for the query as it was then.
     previewing: bool = false,
     preview_q: u64 = 0,
@@ -140,7 +141,7 @@ pub const Nanolight = struct {
         if (s.settings_ui.open) return settings_view.height;
         if (s.previewing) return max_height;
         var h: f32 = header_h + footer_h + 1;
-        if (s.res.n == 0) return h;
+        if (s.res.n == 0) return h + (if (files.dedicated(s.query.text())) @as(f32, 64) else 0);
         h += 1 + list_pad * 2;
         for (s.res.slice(), 0..) |r, i| {
             h += if (r.kind == .calc) calc_h else row_h;
@@ -213,6 +214,14 @@ pub const Nanolight = struct {
             } else if (s.res.n > 0) {
                 ui.div(c).wFull().h(1).bg(p.hair).end();
                 s.list(c, p);
+            } else if (files.dedicated(s.query.text())) {
+                const empty = ui.div(c).wFull().h(64).center();
+                defer empty.end();
+                ui.text(c, switch (s.file_state) {
+                    .searching => "Searching files…",
+                    .failed => "File search unavailable. Check Spotlight indexing.",
+                    else => if (files.words(s.query.text()).len < 2) "Type at least two characters to find files" else "No matching files in Desktop, Documents or Downloads",
+                }, .{ .size = 13, .color = p.sub });
             }
             ui.spacer(c);
             s.footer(c, p);
@@ -271,7 +280,7 @@ pub const Nanolight = struct {
             .bare = true,
             .size = 21,
             .width = .fill,
-            .placeholder = "Search apps, do math, ask Grok…",
+            .placeholder = "Search apps and files, do math…",
             .placeholder_color = p.sub.alpha(0.75),
             .color = p.text,
         });
@@ -320,6 +329,12 @@ pub const Nanolight = struct {
         if (h == s.built) return;
         s.built = h;
         s.web.n = 0;
+        s.local.n = 0;
+        s.file_state = .idle;
+        if (s.host) |host| if (host.files) |ask| {
+            if (files.eligible(q)) s.file_state = .searching;
+            ask(host.ctx, q);
+        };
         if (s.host) |host| if (host.suggest) |ask| if (s.suggest_on and suggest.eligible(q) and @import("calc.zig").eval(q) == null) {
             if (!s.cache.lookup(q, &s.web)) ask(host.ctx, q);
         };
@@ -333,7 +348,36 @@ pub const Nanolight = struct {
         var sug: [results.max_apps]u32 = undefined;
         const ns = s.index.suggestions(&sug);
         var web: [suggest.max_rows][]const u8 = undefined;
-        s.res.build(s.query.text(), s.index.names.items, s.index.launches.items, sug[0..ns], s.web.slices(&web));
+        s.res.build(.{
+            .query = s.query.text(),
+            .names = s.index.names.items,
+            .boost = s.index.launches.items,
+            .suggestions = sug[0..ns],
+            .web = s.web.slices(&web),
+            .local = &s.local,
+        });
+    }
+
+    /// Async local results belong only to the exact query that asked for
+    /// them. Keep the selected app or web action when inserting file rows.
+    pub fn filesAnswered(s: *Nanolight, typed: []const u8, list_in: *const files.List, state: files.State) void {
+        if (!std.mem.eql(u8, typed, s.query.text())) return;
+        const was: ?Row = if (s.sel < s.res.n) s.res.rows[s.sel] else null;
+        s.local = list_in.*;
+        s.file_state = state;
+        s.fill();
+        s.sel = 0;
+        if (was) |r| for (s.res.slice(), 0..) |now, i| {
+            if (now.kind == r.kind and switch (r.kind) {
+                .app => now.app == r.app,
+                .suggest => now.web == r.web,
+                .file, .folder => now.file == r.file,
+                else => true,
+            }) {
+                s.sel = i;
+                break;
+            }
+        };
     }
 
     /// Google's completions of `typed` (what `Host.suggest` asked): kept,
@@ -358,6 +402,7 @@ pub const Nanolight = struct {
         for (s.res.slice(), 0..) |now, i| {
             const same_row = now.kind == r.kind and switch (r.kind) {
                 .app => now.app == r.app,
+                .file, .folder => now.file == r.file,
                 .suggest => suggest.same(s.web.get(now.web), was_text[0..was_len]),
                 else => true,
             };
@@ -417,6 +462,13 @@ pub const Nanolight = struct {
                 ui.richText(c, a.name, s.highlight(i, r, p), .{ .size = 13.5, .weight = .medium, .color = p.text.alpha(0.82) });
                 ui.text(c, a.folder, .{ .size = 12, .color = p.sub.alpha(0.8) });
             },
+            .file, .folder => {
+                const entry = &s.local.entries[r.file];
+                const text = ui.div(c).column().w(440).gap(1);
+                defer text.end();
+                ui.text(c, entry.name(), .{ .size = 13.5, .weight = .medium, .color = p.text, .truncate = .ellipsis });
+                ui.text(c, entry.parent(), .{ .size = 10.5, .color = p.sub.alpha(0.8), .truncate = .ellipsis });
+            },
             .settings => {
                 ui.text(c, "Nanolight Settings", .{ .size = 13.5, .weight = .medium, .color = p.text });
                 ui.text(c, "Shortcut, sync, updates", .{ .size = 12, .color = p.sub.alpha(0.8) });
@@ -441,7 +493,7 @@ pub const Nanolight = struct {
         }
         ui.spacer(c);
         if (i == s.sel) {
-            ui.text(c, if (r.kind == .app or r.kind == .settings) "Open" else "Go", .{ .size = 12, .weight = .medium, .color = p.sub });
+            ui.text(c, if (r.kind == .app or r.kind == .settings or r.kind == .file or r.kind == .folder) "Open" else "Go", .{ .size = 12, .weight = .medium, .color = p.sub });
             ui.kbd(c, "↩");
         } else if (i < 9) ui.textf(c, .{ .size = 12, .weight = .medium, .color = p.sub.alpha(0.5), .tabular = true }, "⌘{d}", .{i + 1});
     }
@@ -472,6 +524,8 @@ pub const Nanolight = struct {
             .search_web => "globe",
             .suggest => "magnifyingglass",
             .settings => "gearshape",
+            .file => "doc.text",
+            .folder => "folder.fill",
             else => "app.dashed",
         }, .{ .size = if (big) 16 else 13, .weight = .medium, .color = p.text });
     }
@@ -524,6 +578,11 @@ pub const Nanolight = struct {
             return;
         }
         if (s.res.n == 0) return;
+        const selected = s.res.rows[@min(s.sel, s.res.n - 1)].kind;
+        if (selected == .file or selected == .folder) {
+            ui.text(c, "Reveal in Finder", .{ .size = 12, .color = p.sub });
+            ui.kbd(c, "⌘↩");
+        }
         ui.text(c, s.res.rows[@min(s.sel, s.res.n - 1)].kind.action(), .{ .size = 12, .weight = .medium, .color = p.text.alpha(0.85) });
         ui.kbd(c, "↩");
         ui.div(c).w(1).h(14).bg(p.hair).end();
@@ -547,6 +606,7 @@ pub const Nanolight = struct {
                 s.index.opened(r.app, s.kv);
                 s.go(s.index.apps.items[r.app].path);
             },
+            .file, .folder => s.go(s.local.entries[r.file].path()),
             .ask_grok, .search_x => s.go(results.url(&s.url_buf, r.kind, s.query.text())),
             .search_web => s.search(s.query.text()),
             .settings => s.openSettings(),
@@ -563,6 +623,13 @@ pub const Nanolight = struct {
         if (s.res.n == 0) return;
         const r = s.res.rows[@min(s.sel, s.res.n - 1)];
         switch (r.kind) {
+            .file, .folder => {
+                const h = s.host orelse return;
+                if (h.reveal_file) |reveal_file| {
+                    reveal_file(h.ctx, s.local.entries[r.file].path());
+                    h.hide(h.ctx);
+                }
+            },
             .search_web => s.go(results.url(&s.url_buf, .search_web, s.query.text())),
             .suggest => s.go(results.url(&s.url_buf, .search_web, s.web.get(r.web))),
             else => s.activate(c),
@@ -573,6 +640,7 @@ pub const Nanolight = struct {
     fn search(s: *Nanolight, words: []const u8) void {
         const h = s.host orelse return;
         const u = results.url(&s.preview_buf, .search_web, words);
+        if (u.len == 0) return;
         const show = h.preview orelse return s.go(u);
         s.preview_url = u;
         s.previewing = true;
@@ -593,6 +661,7 @@ pub const Nanolight = struct {
     }
 
     fn go(s: *Nanolight, target: []const u8) void {
+        if (target.len == 0) return;
         const h = s.host orelse return;
         h.open(h.ctx, target);
         h.hide(h.ctx);

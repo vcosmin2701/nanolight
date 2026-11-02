@@ -1,9 +1,5 @@
-//! Settings, in the panel itself: the shortcut, Google's suggestions,
-//! opening at login, syncing across Macs, updates. The same glass, the
-//! same rows. Esc goes back to search; ↑/↓ move, Return and Space do the
-//! row. The shortcut is one of four, or any key recorded with ⌘, ⌥ or ⌃
-//! (the last chip). Without a host (tests, the film) it still draws, and changes
-//! nothing the app keeps.
+//! Settings UI for shortcuts, suggestions, login, sync, and updates.
+//! Without a host, changes affect only the view.
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 const motion = ui.motion;

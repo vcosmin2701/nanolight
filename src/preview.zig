@@ -1,9 +1,5 @@
-//! A search's page in the panel: a WKWebView over the panel's body
-//! (`view.webArea`), made the first time one shows and kept, hidden,
-//! after. It tells sites it is Safari, as browse does, so Google serves
-//! its own page, and a link that asks for a new window opens in it.
-//! Escape and ⌘↩ reach the panel even while the page has the keys
-//! (`watch`): back to the rows, or into the browser; ⌘[ goes back a page.
+//! Embedded search results using a reusable WKWebView.
+//! Escape returns to search, Cmd-Return opens the browser, and Cmd-[ goes back.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;

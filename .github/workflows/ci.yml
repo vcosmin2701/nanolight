@@ -17,5 +17,6 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
+      - run: zig fmt --check build.zig src
       - run: zig build test
-      - run: zig build app
+      - run: zig build app -Doptimize=ReleaseSafe

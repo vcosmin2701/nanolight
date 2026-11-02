@@ -1,11 +1,5 @@
-//! What Nanolight syncs between a person's Macs, as one record: the key
-//! that opens it, whether Google's suggestions are on, and how often each
-//! app was opened (what an empty panel suggests). JSON, so the server keeps
-//! it as it came (the gateway's /v1/sync, collection `nanolight`).
-//!
-//! Two Macs merge, never overwrite: the key and the suggestions go with
-//! whichever Mac changed them last (`at`), and each app keeps the higher
-//! count of the two, so what you open most anywhere comes up first.
+//! Sync record encoding and merge rules. Newer preferences win; launch
+//! counts use the maximum from either Mac.
 const std = @import("std");
 
 pub const Launch = struct { name: []const u8, count: u16 };

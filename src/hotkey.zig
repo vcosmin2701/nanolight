@@ -1,6 +1,5 @@
-//! A key combination the whole system hands to this app, from any app:
-//! Carbon's hot keys, which every launcher uses (they need no
-//! Accessibility permission, and the keys go to no other app).
+//! Global keyboard shortcut registration through Carbon.
+//! Does not require Accessibility permission.
 const std = @import("std");
 
 const EventTypeSpec = extern struct { class: u32, kind: u32 };

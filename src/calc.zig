@@ -1,14 +1,13 @@
-//! Math typed into the bar, answered as it's typed: + - * / % ^, × and ÷,
-//! parentheses, pi and e, and sqrt, sin, cos, tan, ln, log, abs. A query
-//! counts as math only with an operator or a function in it, so "42" or
-//! "e" alone stay searches.
+//! Calculator parser and number formatting. Plain numbers remain searches.
 const std = @import("std");
 
 pub const Error = error{ Syntax, Domain };
+const max_depth = 64;
 
 const Parser = struct {
     s: []const u8,
     i: usize = 0,
+    depth: usize = 0,
     /// An operator or a function was seen: this is math, not a name.
     math: bool = false,
 
@@ -70,6 +69,9 @@ const Parser = struct {
 
     /// Right-associative: 2^3^2 is 2^9.
     fn power(p: *Parser) Error!f64 {
+        if (p.depth == max_depth) return error.Syntax;
+        p.depth += 1;
+        defer p.depth -= 1;
         const base = try p.unary();
         if (p.op('^', "")) {
             p.math = true;
@@ -79,6 +81,9 @@ const Parser = struct {
     }
 
     fn unary(p: *Parser) Error!f64 {
+        if (p.depth == max_depth) return error.Syntax;
+        p.depth += 1;
+        defer p.depth -= 1;
         if (p.op('-', "−")) return -(try p.unary());
         if (p.op('+', "")) return p.unary();
         return p.primary();
@@ -156,6 +161,8 @@ pub fn format(buf: []u8, v: f64, grouped: bool) []const u8 {
         if (!grouped) return std.fmt.bufPrint(buf, "{d}", .{n}) catch "";
         var digits: [24]u8 = undefined;
         const d = std.fmt.bufPrint(&digits, "{d}", .{@abs(n)}) catch return "";
+        const needed = d.len + (d.len - 1) / 3 + @intFromBool(n < 0);
+        if (needed > buf.len) return "";
         var o: usize = 0;
         if (n < 0) {
             buf[o] = '-';
@@ -208,4 +215,26 @@ test "values read as people write them" {
     try t.expectEqualStrings("-1,000", format(&buf, -1000, true));
     try t.expectEqualStrings("2.5", format(&buf, 2.5, true));
     try t.expectEqualStrings("0.3333333333", format(&buf, 1.0 / 3.0, true));
+}
+
+test "number formatting respects small buffers" {
+    var empty: [0]u8 = .{};
+    var small: [4]u8 = undefined;
+    try std.testing.expectEqualStrings("", format(&empty, -1, true));
+    try std.testing.expectEqualStrings("", format(&small, 1000, true));
+    try std.testing.expectEqualStrings("-123", format(&small, -123, true));
+}
+
+test "deep expressions fail without unbounded recursion" {
+    var parentheses: [259]u8 = @splat('(');
+    @memcpy(parentheses[128..131], "1+1");
+    @memset(parentheses[131..], ')');
+    try std.testing.expect(eval(&parentheses) == null);
+    var signs: [131]u8 = @splat('+');
+    @memcpy(signs[128..], "1+1");
+    try std.testing.expect(eval(&signs) == null);
+    var powers: [257]u8 = @splat('1');
+    for (0..128) |i| powers[i * 2 + 1] = '^';
+    try std.testing.expect(eval(&powers) == null);
+    try std.testing.expectEqual(@as(?f64, 2), eval("((((1+1))))"));
 }

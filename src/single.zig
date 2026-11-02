@@ -1,9 +1,4 @@
-//! One Nanolight at a time. Opening its own row from the panel would ask
-//! macOS to open Nanolight.app, and once the bundle on disk has been
-//! replaced (an update, a reinstall) macOS takes it for another app and
-//! starts a second copy: a second menu bar icon, a second hot key. So the
-//! panel recognises itself (`isSelf`), and a copy that starts while others
-//! run quits them (`quitOthers`): the newest launch is the newest code.
+//! Identifies Nanolight bundles and terminates older running copies.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;

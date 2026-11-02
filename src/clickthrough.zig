@@ -1,13 +1,5 @@
-//! Clicks outside the panel reach what is under it. The window is as tall
-//! as the panel can be, and a shadow's margin wider (it never resizes: see
-//! main.zig's `Live`), so below a short panel it is clear but still there:
-//! a click there landed on Nanolight's own window, which kept the keys, so
-//! the panel stayed and the app beneath got nothing. While the panel shows,
-//! the window ignores the mouse wherever the pointer is not over the panel:
-//! the click goes to the app beneath, which takes the keys, and the panel,
-//! losing them, hides as it always does. The pointer is followed only while
-//! the panel shows (two event monitors, removed as it hides): an idle
-//! Nanolight wakes for nothing.
+//! Passes clicks outside the visible panel through its transparent window.
+//! Mouse monitors run only while the panel is visible.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;

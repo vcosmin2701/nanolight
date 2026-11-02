@@ -1,8 +1,4 @@
-//! What the promo's camera looks at: a desktop, dimmed, and on it the
-//! panel (the app's own `view.zig`), Google's page in it while it
-//! previews, a quiet label naming what is shown, and the end, where the
-//! panel's own rectangle becomes the icon beside the name. Labels are
-//! sized against the camera's zoom, so they read the same at every zoom.
+//! Promo scene: desktop, launcher, search preview, labels, and closing card.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;

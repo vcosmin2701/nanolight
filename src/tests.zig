@@ -19,6 +19,7 @@ test {
     _ = @import("hotkey.zig");
     _ = @import("shortcut.zig");
     _ = @import("recorder.zig");
+    _ = @import("files.zig");
 }
 
 const Probe = struct {
@@ -494,17 +495,127 @@ test "the panel never outgrows its window, which is never resized" {
         tallest = @max(tallest, s.height());
     }
     try std.testing.expect(tallest <= view.max_height);
-    // "a" fills every app row there is, and Google's completions the
-    // rest: the bound is the real one.
+    // Full app and completion rows also leave room for the Files header.
     s.query.set("a");
     s.rebuild();
     var four: @import("suggest.zig").List = .{};
     for ([_][]const u8{ "a1", "a2", "a3", "a4" }) |w| four.push(w);
     s.answered("a", &four);
-    try std.testing.expectEqual(view.max_height, s.height());
+    try std.testing.expect(s.height() < view.max_height);
+    var local: @import("files.zig").List = .{};
+    for ([_][]const u8{ "/Users/me/Documents/a.pdf", "/Users/me/Desktop/a.txt", "/Users/me/Downloads/a.zip", "/Users/me/Documents/abc" }) |path| local.push(path, false);
+    s.filesAnswered("a", &local, .ready);
+    try std.testing.expect(s.height() <= view.max_height);
     var o: onboard.Onboard = .{};
     for ([_]onboard.Step{ .key, .try_it, .done }) |step| {
         o.step = step;
         try std.testing.expect(o.height() <= view.max_height);
     }
+}
+
+test "local results preserve selection, discard stale answers and stay local in file mode" {
+    const files = @import("files.zig");
+    const gpa = std.testing.allocator;
+    var ix: Index = .init(gpa);
+    defer ix.deinit();
+    try ix.add("Reports", "/Applications/Reports.app");
+    var web: Web = .{};
+    var s: view.Nanolight = .{ .index = &ix };
+    defer s.query.deinit();
+    s.host = web.host();
+    s.query.set("report");
+    s.rebuild();
+    s.sel = s.res.n - 1;
+    var local: files.List = .{};
+    local.push("/Users/me/Documents/report.pdf", false);
+    local.push("/Users/me/Downloads/Reports", true);
+    s.filesAnswered("old query", &local, .ready);
+    try std.testing.expectEqual(@as(usize, 0), s.local.n);
+    s.filesAnswered("report", &local, .ready);
+    try std.testing.expectEqual(results.Kind.search_x, s.res.rows[s.sel].kind);
+    try std.testing.expectEqual(results.Kind.app, s.res.rows[0].kind);
+    try std.testing.expectEqual(results.Kind.file, s.res.rows[1].kind);
+    try std.testing.expectEqual(results.Kind.folder, s.res.rows[2].kind);
+    var completion: suggest.List = .{};
+    completion.push("report templates");
+    s.sel = 1;
+    s.answered("report", &completion);
+    try std.testing.expectEqual(results.Kind.file, s.res.rows[s.sel].kind);
+
+    web.asked_len = 0;
+    s.query.set("file:report");
+    s.rebuild();
+    try std.testing.expectEqual(@as(usize, 0), web.asked_len);
+    try std.testing.expectEqual(@as(usize, 0), s.res.n);
+    s.filesAnswered("report", &local, .ready);
+    try std.testing.expectEqual(@as(usize, 0), s.res.n);
+    s.filesAnswered("file:report", &local, .ready);
+    try std.testing.expectEqual(@as(usize, 2), s.res.n);
+    for (s.res.slice()) |row| try std.testing.expect(row.kind == .file or row.kind == .folder);
+    s.query.clear();
+    s.rebuild();
+    try std.testing.expectEqual(@as(usize, 0), s.local.n);
+}
+
+const FileHost = struct {
+    probe: Probe = .{},
+    revealed: bool = false,
+    fn open(ctx: *anyopaque, path: []const u8) void {
+        const h: *FileHost = @ptrCast(@alignCast(ctx));
+        Probe.open(&h.probe, path);
+    }
+    fn reveal(ctx: *anyopaque, path: []const u8) void {
+        const h: *FileHost = @ptrCast(@alignCast(ctx));
+        h.revealed = true;
+        Probe.open(&h.probe, path);
+    }
+    fn hide(ctx: *anyopaque) void {
+        const h: *FileHost = @ptrCast(@alignCast(ctx));
+        Probe.hide(&h.probe);
+    }
+};
+
+test "file rows show paths, open files, reveal folders and display empty states" {
+    const files = @import("files.zig");
+    const gpa = std.testing.allocator;
+    var ix: Index = .init(gpa);
+    defer ix.deinit();
+    var host: FileHost = .{};
+    var s: view.Nanolight = .{ .index = &ix };
+    defer s.query.deinit();
+    s.host = .{ .ctx = &host, .open = FileHost.open, .hide = FileHost.hide, .reveal_file = FileHost.reveal };
+    s.query.set("file:report");
+    s.query.focus();
+    s.rebuild();
+    s.file_state = .searching;
+    var tester: ui.Tester = undefined;
+    try tester.init(gpa, .init(&s, view.Nanolight.view), .{ .width = view.width, .height = view.max_height, .dark = true });
+    defer tester.deinit();
+    tester.settle(1);
+    try std.testing.expect(tester.hasText("Searching files…"));
+    var local: files.List = .{};
+    local.push("/Users/me/Documents/report.pdf", false);
+    local.push("/Users/me/Downloads/Reports", true);
+    s.filesAnswered("file:report", &local, .ready);
+    tester.settle(1);
+    try std.testing.expect(tester.hasText("Files"));
+    try std.testing.expect(tester.hasText("report.pdf"));
+    try std.testing.expect(tester.hasText("/Users/me/Documents"));
+    try std.testing.expect(tester.hasText("Reveal in Finder"));
+    try std.testing.expect(!tester.hasText("Google"));
+    press(&tester, &.{.{ .command = .insert_newline }});
+    try std.testing.expectEqualStrings("/Users/me/Documents/report.pdf", host.probe.opened[0..host.probe.opened_len]);
+    try std.testing.expect(host.probe.hidden);
+    try std.testing.expect(!host.revealed);
+    _ = tester.shortcut(.{ .key = ui.Shortcut.down });
+    try std.testing.expect(tester.shortcut(.{ .key = ui.Shortcut.enter, .cmd = true }));
+    try std.testing.expect(host.revealed);
+    try std.testing.expectEqualStrings("/Users/me/Downloads/Reports", host.probe.opened[0..host.probe.opened_len]);
+    const empty: files.List = .{};
+    s.filesAnswered("file:report", &empty, .ready);
+    tester.settle(1);
+    try std.testing.expect(tester.hasText("No matching files in Desktop, Documents or Downloads"));
+    s.filesAnswered("file:report", &empty, .failed);
+    tester.settle(1);
+    try std.testing.expect(tester.hasText("File search unavailable. Check Spotlight indexing."));
 }

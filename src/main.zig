@@ -1,15 +1,4 @@
-//! Nanolight, after Peekalight: a launcher that opens over everything on
-//! ⌘Space, or the key picked in its welcome (onboard.zig), or from its
-//! menu bar icon; finds apps as you type (initials
-//! too: "ss" is System Settings), answers math, and hands anything else to
-//! Grok, X or Google, with Google's completions of it (suggest.zig) and its
-//! results in the panel (preview.zig). Its panel is the system's vibrancy
-//! (NSVisualEffectView, as launchers use), nanoui drawing on it.
-//! It lives in the menu bar: no Dock icon, nothing drawn while idle.
-//!
-//! `zig build run`, or `zig build app` and open zig-out/Nanolight.app
-//! (its icon, icon.png, is drawn by tools/icon.py).
-//! The walkthrough film, rendered offscreen: `tools/film.sh` (film.zig).
+//! Menu bar app, global shortcut, window lifecycle, and service callbacks.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const objc = nanoui.objc;
@@ -20,6 +9,7 @@ const hotkey = @import("hotkey.zig");
 const shortcut = @import("shortcut.zig");
 const Onboard = @import("onboard.zig").Onboard;
 const suggest = @import("suggest.zig");
+const files = @import("files.zig");
 const Preview = @import("preview.zig").Preview;
 const single = @import("single.zig");
 const ClickThrough = @import("clickthrough.zig").ClickThrough;
@@ -46,11 +36,8 @@ const updated_key = "nanolight.updated";
 /// When this Mac last changed its key or suggestions (settings.zig's `at`).
 const sync_at_key = "nanolight.sync.at";
 
-/// The window around the panel: shown and hidden. It is never resized: it
-/// is as tall as the panel can be, and clear below it; only the system
-/// glass behind the panel follows its height. (A window resized on every
-/// frame of the height's spring shook as it searched: AppKit's new frame
-/// and Metal's next drawable don't land together.)
+/// The window stays at maximum height. Animating its frame causes jitter
+/// because AppKit geometry and Metal rendering update independently.
 pub const Live = struct {
     app: *nanoui.App,
     s: *Nanolight,
@@ -70,6 +57,12 @@ pub const Live = struct {
     asking: [suggest.max_len]u8 = undefined,
     asking_len: usize = 0,
     waiting: u32 = 0,
+    home: []const u8 = "",
+    file_query: files.Query = .{},
+    file_waiting: u32 = 0,
+    file_polling: bool = false,
+    file_typed: [files.max_query]u8 = undefined,
+    file_len: usize = 0,
     /// Updates from GitHub's releases (a signed build only), and the menu
     /// bar icon whose menu offers one once it's ready.
     updater: ?*nanoui.Updater = null,
@@ -83,7 +76,53 @@ pub const Live = struct {
     fn host(l: *Live) view.Host {
         const bind = @import("settings_bind.zig");
         bind.box.ctx = l;
-        return .{ .ctx = l, .open = open, .hide = hide, .resize = resize, .suggest = ask, .preview = showPage, .settings = &bind.box };
+        return .{ .ctx = l, .open = open, .hide = hide, .resize = resize, .suggest = ask, .files = askFiles, .reveal_file = revealFile, .preview = showPage, .settings = &bind.box };
+    }
+
+    fn revealFile(_: *anyopaque, path: []const u8) void {
+        files.reveal(path);
+    }
+
+    fn askFiles(ctx: *anyopaque, typed: []const u8) void {
+        const l: *Live = @ptrCast(@alignCast(ctx));
+        // Stop immediately, including when a query is cleared or becomes
+        // too short. Old gathering work can never answer the new query.
+        l.file_query.stop();
+        l.file_len = 0;
+        if (!files.eligible(typed)) return;
+        @memcpy(l.file_typed[0..typed.len], typed);
+        l.file_len = typed.len;
+        l.file_waiting += 1;
+        nanoui.App.after(files.pause_ms, l, struct {
+            fn f(c: ?*anyopaque) callconv(.c) void {
+                const live: *Live = @ptrCast(@alignCast(c.?));
+                live.file_waiting -= 1;
+                if (live.file_waiting != 0 or live.file_len == 0) return;
+                const q = live.file_typed[0..live.file_len];
+                if (!std.mem.eql(u8, q, live.s.query.text())) return;
+                if (!live.file_query.start(q, live.home)) {
+                    const empty: files.List = .{};
+                    live.s.filesAnswered(q, &empty, .failed);
+                    if (live.window) |w| w.redraw();
+                    return;
+                }
+                if (!live.file_polling) {
+                    live.file_polling = true;
+                    nanoui.App.after(files.poll_ms, live, pollFiles);
+                }
+            }
+        }.f);
+    }
+
+    fn pollFiles(ctx: ?*anyopaque) callconv(.c) void {
+        const l: *Live = @ptrCast(@alignCast(ctx.?));
+        var list: files.List = .{};
+        if (l.file_query.poll(&list)) |state| {
+            l.file_polling = false;
+            if (state == .idle) return;
+            l.s.filesAnswered(l.file_typed[0..l.file_len], &list, state);
+            if (l.window) |w| w.redraw();
+        } else nanoui.App.after(files.poll_ms, l, pollFiles);
     }
 
     fn open(ctx: *anyopaque, target: []const u8) void {
@@ -482,7 +521,8 @@ pub fn main(init: std.process.Init) !void {
     var o: Onboard = .{};
     var s: Nanolight = .{ .index = &index, .kv = kv, .onboard = &o };
     defer s.query.deinit();
-    var live: Live = .{ .app = app, .s = &s, .o = &o, .kv = kv, .choice = shortcut.load(kv, init.gpa) };
+    var live: Live = .{ .app = app, .s = &s, .o = &o, .kv = kv, .choice = shortcut.load(kv, init.gpa), .home = init.environ_map.get("HOME") orelse "" };
+    defer live.file_query.stop();
     s.host = live.host();
     // Google's completions are on unless turned off from the menu bar.
     if (kv.get(init.gpa, suggest_key) catch null) |v| {
@@ -537,6 +577,7 @@ pub fn main(init: std.process.Init) !void {
     };
     // Signed in before: synced now. Signing in is from the menu.
     live.acct = .{ .gpa = init.gpa, .kv = kv, .hooks = live.accountHooks() };
+    defer if (live.acct) |*a| a.deinit();
     live.acct.?.load();
     live.menu();
     // Restarted by an automatic update: quietly, the panel saying so the
